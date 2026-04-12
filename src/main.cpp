@@ -78,35 +78,36 @@ FKeyMap fkeyMap[] = {
 
 bool matchFKeyState(const KeyState &s, uint8_t &outKey)
 {
-  static uint8_t prevKey = 0x00;
-  static uint8_t prevMod = 0x00;
-
   uint8_t k = s.keys[0];
+
+  Serial.print("[MATCH] input mod=");
+  Serial.print(s.modifiers, HEX);
+  Serial.print(" key=");
+  Serial.println(k, HEX);
 
   for (auto &m : fkeyMap)
   {
+    Serial.print("  map check: m.mod=");
+    Serial.print(m.mod, HEX);
+    Serial.print(" m.k2=");
+    Serial.print(m.k2, HEX);
+    Serial.print(" m.hid=");
+    Serial.println(m.hid, HEX);
+
     if (m.mode == 0x11 &&
         m.k2 == k &&
         m.mod == s.modifiers)
     {
-      // エッジ検出（押された瞬間のみ）
-      if (k != 0x00 && (prevKey != k || prevMod != s.modifiers))
-      {
-        outKey = m.hid;
-        prevKey = k;
-        prevMod = s.modifiers;
-        return true;
-      }
+      Serial.println("  -> CONDITION MATCH");
+
+      outKey = m.hid;
+      return true;
     }
   }
 
-  // 状態更新
-  prevKey = k;
-  prevMod = s.modifiers;
-
+  Serial.println("  -> NO MATCH");
   return false;
 }
-
 
 bool matchFKeySpecial(const SpecialFrame &f, uint8_t &outKey)
 {
@@ -128,7 +129,16 @@ bool matchFKeySpecial(const SpecialFrame &f, uint8_t &outKey)
   return false;
 }
 
-FrameType readFrame(FrameResult &out)
+// ===== RawFrame（低レベルフレーム） =====
+struct RawFrame
+{
+  uint8_t type;
+  uint8_t len;
+  uint8_t data[64];
+};
+
+// ===== 生フレーム取得（構造のみ） =====
+bool readRawFrame(RawFrame &f)
 {
   static uint8_t buf[64];
   static int idx = 0;
@@ -137,87 +147,164 @@ FrameType readFrame(FrameResult &out)
   {
     uint8_t d = mySerial.read();
 
-    if (d == 0x57)
-    {
-      idx = 0;
-    }
+    if (d == 0x57) idx = 0;
 
-    if (idx < (int)sizeof(buf))
-    {
-      buf[idx++] = d;
-    }
+    if (idx < (int)sizeof(buf)) buf[idx++] = d;
 
-    if (idx < 4)
-      continue;
+    if (idx < 4) continue;
 
-    if (buf[0] != 0x57 || buf[1] != 0xAB)
-      continue;
+    if (buf[0] != 0x57 || buf[1] != 0xAB) continue;
 
     uint8_t type = buf[2];
     uint8_t len  = buf[3];
 
-    if (idx < (len + 4))
-      continue;
-
-    if (type == 0x82)
+    // 82は4バイトで確定扱い
+    if (type == 0x82 && idx >= 4)
     {
+      f.type = type;
+      f.len = len;
+      memcpy(f.data, buf, idx);
       idx = 0;
-      return FRAME_NONE;
+      return true;
     }
 
-    if (type == 0x88)
-    {
-      // ===== STATE =====
-      if (len >= 0x0B)
-      {
-        out.state.modifiers = buf[5];
-        for (int i = 0; i < 6; i++)
-        {
-          out.state.keys[i] = buf[7 + i];
-        }
+    if (idx < (len + 4)) continue;
 
-        uint8_t key;
-        if (matchFKeyState(out.state, key))
-        {
-          out.type = FRAME_MAPPED;
-          out.mappedKey = key;
-          idx = 0;
-          return FRAME_MAPPED;
-        }
-
-        out.type = FRAME_STATE;
-        idx = 0;
-        return FRAME_STATE;
-      }
-      // ===== SPECIAL =====
-      else
-      {
-        out.special.length = (len + 4 < sizeof(out.special.raw)) ? (len + 4) : sizeof(out.special.raw);
-
-        for (int i = 0; i < out.special.length; i++)
-        {
-          out.special.raw[i] = buf[i];
-        }
-
-        uint8_t key;
-        if (matchFKeySpecial(out.special, key))
-        {
-          out.type = FRAME_MAPPED;
-          out.mappedKey = key;
-          idx = 0;
-          return FRAME_MAPPED;
-        }
-
-        out.type = FRAME_SPECIAL;
-        idx = 0;
-        return FRAME_SPECIAL;
-      }
-    }
+    f.type = type;
+    f.len  = len;
+    memcpy(f.data, buf, len + 4);
 
     idx = 0;
+    return true;
+  }
+
+  return false;
+}
+
+// ===== フレーム解釈（意味） =====
+// ===== フレーム解釈（イベント駆動版） =====
+FrameType interpretFrame(const RawFrame &f, FrameResult &out)
+{
+  // ===== 状態 =====
+  static bool measuring = false;
+  static int idleCount = 0;
+
+  // ===== IDLE（時間） =====
+  if (f.type == 0x82)
+  {
+    if (measuring)
+    {
+      idleCount++;
+      Serial.print("[82] idle=");
+      Serial.println(idleCount);
+    }
+    return FRAME_NONE;
+  }
+
+  // ===== DATA =====
+  if (f.type == 0x88)
+  {
+    // ===== STATE =====
+    if (f.len >= 0x0B)
+    {
+      out.state.modifiers = f.data[5];
+      for (int i = 0; i < 6; i++)
+      {
+        out.state.keys[i] = f.data[7 + i];
+      }
+
+      uint8_t mod = out.state.modifiers;
+      uint8_t key = out.state.keys[0];
+      // ★これ追加（超重要）
+      if (measuring && mod == 0x00 && key == 0x00)
+      {
+        Serial.println(">>> CANCEL (all released)");
+
+        measuring = false;
+        idleCount = 0;
+
+        out.type = FRAME_STATE;
+        return FRAME_STATE;
+      }
+      Serial.print("[STATE] mod=");
+      Serial.print(mod, HEX);
+      Serial.print(" key=");
+      Serial.print(key, HEX);
+      Serial.print(" idle=");
+      Serial.print(idleCount);
+      Serial.print(" measuring=");
+      Serial.println(measuring ? "Y" : "N");
+
+      // ===== 測定開始（トリガー） =====
+      bool isTrigger = ((mod == 0x04 || mod == 0x08) && key == 0x00) || (key == 0x65);
+
+      if (!measuring && isTrigger)
+      {
+        Serial.println(">>> START MEASURE");
+        measuring = true;
+        idleCount = 0;
+        return FRAME_STATE;
+      }
+
+      // ===== 判定 =====
+      if (measuring && key != 0x00)
+      {
+        Serial.print(">>> DECIDE idle=");
+        Serial.println(idleCount);
+
+        uint8_t mapped;
+        bool isMapped = matchFKeyState(out.state, mapped);
+
+        if (isMapped && idleCount < 10)
+        {
+          Serial.println(">>> RESULT: MAPPED");
+          out.type = FRAME_MAPPED;
+          out.mappedKey = mapped;
+        }
+        else
+        {
+          Serial.println(">>> RESULT: STATE");
+          out.type = FRAME_STATE;
+        }
+
+        measuring = false;
+        idleCount = 0;
+        return out.type;
+      }
+
+      // ===== 通常STATE =====
+      out.type = FRAME_STATE;
+      return FRAME_STATE;
+    }
+
+    // ===== SPECIAL =====
+    out.special.length = (f.len + 4 < sizeof(out.special.raw)) ? (f.len + 4) : sizeof(out.special.raw);
+    for (int i = 0; i < out.special.length; i++)
+    {
+      out.special.raw[i] = f.data[i];
+    }
+
+    uint8_t key;
+    if (matchFKeySpecial(out.special, key))
+    {
+      out.type = FRAME_MAPPED;
+      out.mappedKey = key;
+      return FRAME_MAPPED;
+    }
+
+    out.type = FRAME_SPECIAL;
+    return FRAME_SPECIAL;
   }
 
   return FRAME_NONE;
+}
+
+// ===== 統合 =====
+FrameType readFrame(FrameResult &out)
+{
+  RawFrame f;
+  if (!readRawFrame(f)) return FRAME_NONE;
+  return interpretFrame(f, out);
 }
 
 
@@ -232,26 +319,38 @@ void setup()
 // ===== loop（構造化取得モード + BLE送信） =====
 void loop()
 {
+  static KeyState pendingState;
+  static bool hasPending = false;
+  static bool skipNextState = false;
   FrameResult r;
   FrameType result = readFrame(r);
 
   switch (result)
   {
-    case FRAME_MAPPED:
-      if (bleKeyboard.isConnected())
-      {
-        bleKeyboard.press(r.mappedKey);
-        bleKeyboard.release(r.mappedKey);
-      }
-      break;
+case FRAME_MAPPED:
+  if (bleKeyboard.isConnected())
+  {
+    if (hasPending)
+    {
+      KeyReport empty = {0};
+      bleKeyboard.sendReport(&empty);
+      hasPending = false;
+    }
 
+    // ★ これ追加
+    skipNextState = true;
+
+    bleKeyboard.press(r.mappedKey);
+    bleKeyboard.release(r.mappedKey);
+  }
+  break;
+  
     case FRAME_STATE:
     {
-      // ===== デバッグ表示 =====
+      // ===== デバッグ =====
       Serial.print("STATE: mod=");
       Serial.print(r.state.modifiers, HEX);
       Serial.print(" keys=");
-
       for (int i = 0; i < 6; i++)
       {
         if (r.state.keys[i] < 0x10) Serial.print("0");
@@ -259,40 +358,32 @@ void loop()
         Serial.print(" ");
       }
       Serial.println();
-
-      // ===== 先行modifier抑制（Fキー候補） =====
-      bool suppressModifier = false;
-      if (r.state.keys[0] == 0x00 && r.state.modifiers != 0x00)
+      if (skipNextState)
       {
-        for (auto &m : fkeyMap)
-        {
-          if (m.mode == 0x11 && m.mod == r.state.modifiers)
-          {
-            suppressModifier = true;
-            break;
-          }
-        }
+        skipNextState = false;
+        break; // 完全スキップ
       }
-
-      if (suppressModifier)
-      {
-        break;
-      }
-
-      if (bleKeyboard.isConnected())
+      // ★ 前のpendingを送る
+      if (hasPending && bleKeyboard.isConnected())
       {
         KeyReport report = {0};
-        report.modifiers = r.state.modifiers;
+        report.modifiers = pendingState.modifiers;
 
         for (int i = 0; i < 6; i++)
         {
-          report.keys[i] = r.state.keys[i];
+          report.keys[i] = pendingState.keys[i];
         }
 
         bleKeyboard.sendReport(&report);
       }
+
+      // ★ 今のSTATEをpendingにする
+      pendingState = r.state;
+      hasPending = true;
+
       break;
     }
+
     case FRAME_SPECIAL:
       Serial.print("SPECIAL: ");
       for (int i = 0; i < r.special.length; i++)
