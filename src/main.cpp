@@ -4,11 +4,12 @@
 // =============================================
 
 #include <Arduino.h>
-#include <BleKeyboard.h>
+#include <BleComboKeyboard.h>
+#include <BleComboMouse.h>
 
 HardwareSerial mySerial(2);
-BleKeyboard bleKeyboard("SimpleBLEKeyboard", "ESP32", 100);
-
+BleComboKeyboard bleKeyboard("SimpleBLEDevice", "ESP32", 100);
+BleComboMouse bleMouse(&bleKeyboard);
 // ===== KeyState =====
 struct KeyState
 {
@@ -73,6 +74,7 @@ void setup()
   
   mySerial.begin(115200, SERIAL_8N1, 16, 17);
   bleKeyboard.begin();
+  bleMouse.begin();
 }
 
 // ===== loop（そのまま転送） =====
