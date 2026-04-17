@@ -1,31 +1,3 @@
-// =============================================
-// 超シンプル版：有線キーボード → BLE ブリッジ
-// （K400の闇は消し去った）
-// =============================================
-
-#include <Arduino.h>
-#include <BleComboKeyboard.h>
-#include <BleComboMouse.h>
-
-HardwareSerial mySerial(2);
-BleComboKeyboard bleKeyboard("SimpleBLEDevice", "ESP32", 100);
-BleComboMouse bleMouse(&bleKeyboard);
-// ===== KeyState =====
-struct KeyState
-{
-  uint8_t modifiers;
-  uint8_t keys[6];
-};
-
-// ===== RawFrame =====
-struct RawFrame
-{
-  uint8_t type;
-  uint8_t len;
-  uint8_t data[64];
-};
-
-// ===== フレーム取得 =====
 bool readRawFrame(RawFrame &f)
 {
   static uint8_t buf[64];
@@ -35,21 +7,48 @@ bool readRawFrame(RawFrame &f)
   {
     uint8_t d = mySerial.read();
 
+    // ヘッダ開始検出
     if (d == 0x57) idx = 0;
 
-    if (idx < (int)sizeof(buf)) buf[idx++] = d;
+    if (idx < (int)sizeof(buf))
+      buf[idx++] = d;
 
-    if (idx < 4) continue;
+    if (idx < 3) continue;
 
-    if (buf[0] != 0x57 || buf[1] != 0xAB) continue;
+    // ヘッダ確認
+    if (buf[0] != 0x57 || buf[1] != 0xAB)
+      continue;
 
     uint8_t type = buf[2];
-    uint8_t len  = buf[3];
 
-    if (type == 0x82 && idx >= 4)
+    // =========================
+    // 状態2（マウス）: 固定7バイト
+    // =========================
+    if (type == 0x02)
+    {
+      if (idx < 7) continue;
+
+      f.type = 0x02;
+      f.len  = 4;  // ボタン + dx + dy + wheel
+
+      memcpy(f.data, buf, 7);
+
+      idx = 0;
+      return true;
+    }
+
+    // =========================
+    // 状態0（従来）
+    // =========================
+    if (idx < 4) continue;
+
+    uint8_t len = buf[3];
+
+    // 特殊フレーム
+    if (type == 0x82)
     {
       f.type = type;
-      f.len = len;
+      f.len  = len;
       memcpy(f.data, buf, idx);
       idx = 0;
       return true;
@@ -66,50 +65,4 @@ bool readRawFrame(RawFrame &f)
   }
 
   return false;
-}
-
-// ===== setup =====
-void setup()
-{
-  
-  mySerial.begin(115200, SERIAL_8N1, 16, 17);
-  bleKeyboard.begin();
-  bleMouse.begin();
-}
-
-// ===== loop（そのまま転送） =====
-void loop()
-{
-  RawFrame f;
-
-  if (!readRawFrame(f)) return;
-
-  // STATEのみ扱う
-  if (f.type == 0x88 && f.len >= 0x0B)
-  {
-    KeyState s;
-
-    s.modifiers = f.data[5];
-
-    for (int i = 0; i < 6; i++)
-    {
-      s.keys[i] = f.data[7 + i];
-    }
-
-    
-
-    // ===== BLE送信（そのまま） =====
-    if (bleKeyboard.isConnected())
-    {
-      KeyReport report = {0};
-      report.modifiers = s.modifiers;
-
-      for (int i = 0; i < 6; i++)
-      {
-        report.keys[i] = s.keys[i];
-      }
-
-      bleKeyboard.sendReport(&report);
-    }
-  }
 }
