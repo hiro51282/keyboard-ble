@@ -153,86 +153,86 @@ void loop()
     {
         switch (f.type)
         {
-            // =============================================
-            // Keyboard route
-            // =============================================
-            case 0x01:
+        // =============================================
+        // Keyboard route
+        // =============================================
+        case 0x01:
+        {
+            if (!bleKeyboard.isConnected())
+                break;
+
+            KeyReport report = {0};
+
+            // 57 AB 01 [modifier] [reserved] [key1..key6]
+            report.modifiers = f.data[3];
+
+            for (int i = 0; i < 6; i++)
             {
-                if (!bleKeyboard.isConnected())
-                    break;
+                report.keys[i] = f.data[5 + i];
+            }
 
-                KeyReport report = {0};
+            bleKeyboard.sendReport(&report);
+            break;
+        }
 
-                // 57 AB 01 [modifier] [reserved] [key1..key6]
-                report.modifiers = f.data[3];
+        // =============================================
+        // Mouse route
+        // =============================================
+        case 0x02:
+        {
+            uint8_t buttons = f.data[3];
+            int8_t dx = (int8_t)f.data[4];
+            int8_t dy = (int8_t)f.data[5];
+            int8_t wheel = (int8_t)f.data[6];
 
-                for (int i = 0; i < 6; i++)
+            // ---------------------------------------------
+            // Mouse button handling
+            // 想定:
+            // bit0 = Left
+            // bit1 = Right
+            // bit2 = Middle
+            // bit3 = Back
+            // bit4 = Forward
+            // bit5 = Wheel Left（横スクロール左 / 仮説）
+            // bit6 = Wheel Right（横スクロール右 / 仮説）
+            // ※ Back / Forward / 横スクロールは環境差あり
+            // ---------------------------------------------
+
+            static uint8_t prevButtons = 0;
+
+            auto syncButton = [&](uint8_t mask, uint8_t buttonType)
+            {
+                bool nowPressed = (buttons & mask) != 0;
+                bool prevPressed = (prevButtons & mask) != 0;
+
+                if (nowPressed && !prevPressed)
                 {
-                    report.keys[i] = f.data[5 + i];
+                    bleMouse.press(buttonType);
                 }
-
-                bleKeyboard.sendReport(&report);
-                break;
-            }
-
-            // =============================================
-            // Mouse route
-            // =============================================
-            case 0x02:
-            {
-                uint8_t buttons = f.data[3];
-                int8_t dx = (int8_t)f.data[4];
-                int8_t dy = (int8_t)f.data[5];
-                int8_t wheel = (int8_t)f.data[6];
-
-                // ---------------------------------------------
-                // Mouse button handling
-                // 想定:
-                // bit0 = Left
-                // bit1 = Right
-                // bit2 = Middle
-                // bit3 = Back
-                // bit4 = Forward
-                // bit5 = Wheel Left（横スクロール左 / 仮説）
-                // bit6 = Wheel Right（横スクロール右 / 仮説）
-                // ※ Back / Forward / 横スクロールは環境差あり
-                // ---------------------------------------------
-
-                static uint8_t prevButtons = 0;
-
-                auto syncButton = [&](uint8_t mask, uint8_t buttonType)
+                else if (!nowPressed && prevPressed)
                 {
-                    bool nowPressed = (buttons & mask) != 0;
-                    bool prevPressed = (prevButtons & mask) != 0;
+                    bleMouse.release(buttonType);
+                }
+            };
 
-                    if (nowPressed && !prevPressed)
-                    {
-                        bleMouse.press(buttonType);
-                    }
-                    else if (!nowPressed && prevPressed)
-                    {
-                        bleMouse.release(buttonType);
-                    }
-                };
+            syncButton(0x01, MOUSE_LEFT);
+            syncButton(0x02, MOUSE_RIGHT);
+            syncButton(0x04, MOUSE_MIDDLE);
 
-                syncButton(0x01, MOUSE_LEFT);
-                syncButton(0x02, MOUSE_RIGHT);
-                syncButton(0x04, MOUSE_MIDDLE);
+            // Back / Forward
+            // BleComboMouse 側で対応していればそのまま使う
+            // 未対応なら要置き換え
+            syncButton(0x08, MOUSE_BACK);
+            syncButton(0x10, MOUSE_FORWARD);
 
-                // Back / Forward
-                // BleComboMouse 側で対応していればそのまま使う
-                // 未対応なら要置き換え
-                syncButton(0x08, MOUSE_BACK);
-                syncButton(0x10, MOUSE_FORWARD);
+            prevButtons = buttons;
 
-                prevButtons = buttons;
-
-                // move / wheel は蓄積して周期送信
-                accumX += dx;
-                accumY += dy;
-                accumWheel += wheel;
-                break;
-            }
+            // move / wheel は蓄積して周期送信
+            accumX += dx;
+            accumY += dy;
+            accumWheel += wheel;
+            break;
+        }
         }
     }
 
@@ -252,9 +252,15 @@ void loop()
     if (accumX == 0 && accumY == 0 && accumWheel == 0)
         return;
 
-    bleMouse.move(accumX, accumY, accumWheel);
 
-    accumX = 0;
-    accumY = 0;
-    accumWheel = 0;
+    int sendX = constrain(accumX, -127, 127);
+    int sendY = constrain(accumY, -127, 127);
+    int sendWheel = constrain(accumWheel, -127, 127);
+
+    bleMouse.move(sendX, sendY, sendWheel);
+
+    accumX -= sendX;
+    accumY -= sendY;
+    accumWheel -= sendWheel;
+    
 }
