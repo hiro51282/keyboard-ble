@@ -131,7 +131,7 @@ static const uint8_t _hidReportDescriptor[] = {
   END_COLLECTION(0)          // END_COLLECTION
 };
 
-BleComboKeyboard::BleComboKeyboard(std::string deviceName, std::string deviceManufacturer, uint8_t batteryLevel) : hid(0)
+BleComboKeyboard::BleComboKeyboard(std::string deviceName, std::string deviceManufacturer, uint8_t batteryLevel) : hid(0), pServer(nullptr)
 {
   this->deviceName = deviceName;
   this->deviceManufacturer = deviceManufacturer;
@@ -152,6 +152,15 @@ bool BleComboKeyboard::isConnected(void) {
   return this->connectionStatus->connected;
 }
 
+void BleComboKeyboard::restartAdvertising(void)
+{
+  if (this->pServer != nullptr)
+  {
+    this->pServer->getAdvertising()->start();
+    ESP_LOGD(LOG_TAG, "Advertising restarted!");
+  }
+}
+
 void BleComboKeyboard::setBatteryLevel(uint8_t level) {
   this->batteryLevel = level;
   if (hid != 0)
@@ -161,10 +170,10 @@ void BleComboKeyboard::setBatteryLevel(uint8_t level) {
 void BleComboKeyboard::taskServer(void* pvParameter) {
   BleComboKeyboard* bleKeyboardInstance = (BleComboKeyboard *) pvParameter; //static_cast<BleComboKeyboard *>(pvParameter);
   BLEDevice::init(bleKeyboardInstance->deviceName);
-  BLEServer *pServer = BLEDevice::createServer();
-  pServer->setCallbacks(bleKeyboardInstance->connectionStatus);
+  bleKeyboardInstance->pServer = BLEDevice::createServer();
+  bleKeyboardInstance->pServer->setCallbacks(bleKeyboardInstance->connectionStatus);
 
-  bleKeyboardInstance->hid = new BLEHIDDevice(pServer);
+  bleKeyboardInstance->hid = new BLEHIDDevice(bleKeyboardInstance->pServer);
   bleKeyboardInstance->inputKeyboard = bleKeyboardInstance->hid->inputReport(KEYBOARD_ID); // <-- input REPORTID from report map
   bleKeyboardInstance->outputKeyboard = bleKeyboardInstance->hid->outputReport(KEYBOARD_ID);
   bleKeyboardInstance->inputMediaKeys = bleKeyboardInstance->hid->inputReport(MEDIA_KEYS_ID);
@@ -188,7 +197,7 @@ void BleComboKeyboard::taskServer(void* pvParameter) {
   bleKeyboardInstance->hid->reportMap((uint8_t*)_hidReportDescriptor, sizeof(_hidReportDescriptor));
   bleKeyboardInstance->hid->startServices();
 
-  BLEAdvertising *pAdvertising = pServer->getAdvertising();
+  BLEAdvertising *pAdvertising = bleKeyboardInstance->pServer->getAdvertising();
   pAdvertising->setAppearance(HID_KEYBOARD);
   pAdvertising->addServiceUUID(bleKeyboardInstance->hid->hidService()->getUUID());
   pAdvertising->start();
@@ -502,4 +511,3 @@ size_t BleComboKeyboard::write(const uint8_t *buffer, size_t size) {
 	}
 	return n;
 }
-

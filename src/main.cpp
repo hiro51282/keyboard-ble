@@ -59,8 +59,7 @@ enum class ButtonEvent
 void requestPairMode()
 {
     Serial.println("requestPairMode(): advertising restart pending");
-    // TODO:
-    // bleKeyboard.restartAdvertising();
+    bleKeyboard.restartAdvertising();
 }
 
 // =============================================

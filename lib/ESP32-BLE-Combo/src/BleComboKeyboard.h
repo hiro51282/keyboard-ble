@@ -91,6 +91,7 @@ class BleComboKeyboard : public Print
 private:
   BleConnectionStatus* connectionStatus;
   BLEHIDDevice* hid;
+  BLEServer* pServer;
   BLECharacteristic* inputKeyboard;
   BLECharacteristic* outputKeyboard;
   BLECharacteristic* inputMediaKeys;
@@ -115,6 +116,7 @@ public:
   
   void releaseAll(void);
   bool isConnected(void);
+  void restartAdvertising(void);
   void setBatteryLevel(uint8_t level);
   uint8_t batteryLevel;
   std::string deviceManufacturer;
