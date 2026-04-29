@@ -25,6 +25,45 @@ BleComboMouse bleMouse(&bleKeyboard);
 constexpr unsigned long SEND_INTERVAL_US = 36000;
 
 // =============================================
+// Debug Hardware UI
+// =============================================
+constexpr int BUTTON_PIN = 4;
+constexpr int LED_PIN = 2;
+
+// =============================================
+// Device state / Button event
+// =============================================
+enum class DeviceState
+{
+    CONNECTED,
+    ADVERTISING,
+    PAIR_MODE,
+    ERROR
+};
+
+enum class ButtonEvent
+{
+    NONE,
+    SHORT_PRESS,
+    LONG_PRESS,
+    VERY_LONG_PRESS
+};
+
+// =============================================
+// Pair mode helper
+// Phase 3:
+// いまは state 遷移 + ログのみ
+// 次段階で BleCombo 側に restartAdvertising()
+// を生やしてここから呼ぶ
+// =============================================
+void requestPairMode()
+{
+    Serial.println("requestPairMode(): advertising restart pending");
+    // TODO:
+    // bleKeyboard.restartAdvertising();
+}
+
+// =============================================
 // RawFrame
 // =============================================
 struct RawFrame
@@ -131,6 +170,11 @@ void setup()
     bleKeyboard.begin();
     bleMouse.begin();
 
+    // Debug button / LED
+    pinMode(BUTTON_PIN, INPUT_PULLUP);
+    pinMode(LED_PIN, OUTPUT);
+    digitalWrite(LED_PIN, LOW);
+
     Serial.println("BLE Keyboard + Mouse bridge start");
     Serial.print("SEND_INTERVAL_US = ");
     Serial.println(SEND_INTERVAL_US);
@@ -141,6 +185,136 @@ void setup()
 // =============================================
 void loop()
 {
+    // =============================================
+    // State machine (Phase 1)
+    // まずは enum を導入して状態を明示化する
+    // 実際の button event / pair mode 制御は次段階
+    // =============================================
+    static DeviceState currentState = DeviceState::ADVERTISING;
+
+    // 初回および通常時は実接続状態を反映
+    // PAIR_MODE 中だけ明示的に状態保持する
+    if (currentState != DeviceState::PAIR_MODE)
+    {
+        currentState = bleKeyboard.isConnected()
+                           ? DeviceState::CONNECTED
+                           : DeviceState::ADVERTISING;
+    }
+
+    // =============================================
+    // Button event detection (Phase 2)
+    // NONE / SHORT / LONG / VERY_LONG を判定
+    // まだ動作は紐づけず、まずは観測だけ行う
+    // =============================================
+    static bool prevPressed = false;
+    static unsigned long pressStartMs = 0;
+
+    ButtonEvent buttonEvent = ButtonEvent::NONE;
+
+    bool buttonPressed = (digitalRead(BUTTON_PIN) == LOW);
+
+    if (buttonPressed && !prevPressed)
+    {
+        pressStartMs = millis();
+    }
+
+    if (!buttonPressed && prevPressed)
+    {
+        unsigned long pressTime = millis() - pressStartMs;
+
+        if (pressTime > 5000)
+        {
+            buttonEvent = ButtonEvent::VERY_LONG_PRESS;
+        }
+        else if (pressTime > 1500)
+        {
+            buttonEvent = ButtonEvent::LONG_PRESS;
+        }
+        else
+        {
+            buttonEvent = ButtonEvent::SHORT_PRESS;
+        }
+    }
+
+    prevPressed = buttonPressed;
+
+    switch (buttonEvent)
+    {
+    case ButtonEvent::SHORT_PRESS:
+        Serial.println("ButtonEvent: SHORT_PRESS");
+        // 将来的に Host切替へ
+        break;
+
+    case ButtonEvent::LONG_PRESS:
+        Serial.println("ButtonEvent: LONG_PRESS -> PAIR_MODE");
+        currentState = DeviceState::PAIR_MODE;
+        requestPairMode();
+        break;
+
+    case ButtonEvent::VERY_LONG_PRESS:
+        Serial.println("ButtonEvent: VERY_LONG_PRESS");
+        // 将来的に clearBond() / factory reset
+        break;
+
+    default:
+        break;
+    }
+
+    // =============================================
+    // LED state management
+    // connected     : LED OFF
+    // advertising   : LED blink
+    // disconnected  : LED ON（初期状態 / 未接続）
+    // ※ pair mode は後で追加
+    // =============================================
+    static unsigned long lastBlinkMs = 0;
+    static bool ledState = false;
+
+    bool connected = bleKeyboard.isConnected();
+
+switch (currentState)
+{
+case DeviceState::CONNECTED:
+    // 接続済 → 消灯
+    ledState = false;
+    digitalWrite(LED_PIN, LOW);
+    break;
+
+case DeviceState::ADVERTISING:
+{
+    // advertising → ゆっくり点滅
+    unsigned long nowMs = millis();
+
+    if (nowMs - lastBlinkMs > 500)
+    {
+        lastBlinkMs = nowMs;
+        ledState = !ledState;
+        digitalWrite(LED_PIN, ledState ? HIGH : LOW);
+    }
+    break;
+}
+
+case DeviceState::PAIR_MODE:
+{
+    // pair mode → 高速点滅
+    unsigned long nowMs = millis();
+
+    if (nowMs - lastBlinkMs > 120)
+    {
+        lastBlinkMs = nowMs;
+        ledState = !ledState;
+        digitalWrite(LED_PIN, ledState ? HIGH : LOW);
+    }
+    break;
+}
+
+case DeviceState::ERROR:
+default:
+    // 仮: ERROR は点灯固定
+    ledState = true;
+    digitalWrite(LED_PIN, HIGH);
+    break;
+}
     static int accumX = 0;
     static int accumY = 0;
     static int accumWheel = 0;
@@ -252,7 +426,6 @@ void loop()
     if (accumX == 0 && accumY == 0 && accumWheel == 0)
         return;
 
-
     int sendX = constrain(accumX, -127, 127);
     int sendY = constrain(accumY, -127, 127);
     int sendWheel = constrain(accumWheel, -127, 127);
@@ -262,5 +435,4 @@ void loop()
     accumX -= sendX;
     accumY -= sendY;
     accumWheel -= sendWheel;
-    
 }
