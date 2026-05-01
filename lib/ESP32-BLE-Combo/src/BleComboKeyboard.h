@@ -117,6 +117,7 @@ public:
   void releaseAll(void);
   bool isConnected(void);
   void restartAdvertising(void);
+  void disconnectAndAdvertise(void);
   void setBatteryLevel(uint8_t level);
   uint8_t batteryLevel;
   std::string deviceManufacturer;

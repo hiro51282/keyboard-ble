@@ -161,6 +161,23 @@ void BleComboKeyboard::restartAdvertising(void)
   }
 }
 
+// ★追加：ちゃんと別れてから再募集する
+void BleComboKeyboard::disconnectAndAdvertise(void)
+{
+  if (this->pServer == nullptr) return;
+
+  // 既存接続を切る（雑だけど十分）
+  for (uint16_t i = 0; i < 4; ++i)
+  {
+    this->pServer->disconnect(i);
+  }
+
+  // 再募集
+  this->pServer->getAdvertising()->start();
+
+  ESP_LOGD(LOG_TAG, "Disconnected and advertising restarted!");
+}
+
 void BleComboKeyboard::setBatteryLevel(uint8_t level) {
   this->batteryLevel = level;
   if (hid != 0)
