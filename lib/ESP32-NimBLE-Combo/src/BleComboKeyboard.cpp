@@ -1,8 +1,7 @@
-#include <BLEDevice.h>
-#include <BLEUtils.h>
-#include <BLEServer.h>
-#include "BLE2902.h"
-#include "BLEHIDDevice.h"
+#include <NimBLEDevice.h>
+#include <NimBLEUtils.h>
+#include <NimBLEServer.h>
+#include "NimBLEHIDDevice.h"
 #include "HIDTypes.h"
 #include <driver/adc.h>
 #include "sdkconfig.h"
@@ -16,7 +15,7 @@
   #define LOG_TAG ""
 #else
   #include "esp_log.h"
-  static const char* LOG_TAG = "BLEDevice";
+  static const char* LOG_TAG = "NimBLEDevice";
 #endif
 
 
@@ -131,7 +130,7 @@ static const uint8_t _hidReportDescriptor[] = {
   END_COLLECTION(0)          // END_COLLECTION
 };
 
-BleComboKeyboard::BleComboKeyboard(std::string deviceName, std::string deviceManufacturer, uint8_t batteryLevel) : hid(0), pServer(nullptr)
+BleComboKeyboard::BleComboKeyboard(std::string deviceName, std::string deviceManufacturer, uint8_t batteryLevel) : hid(0)
 {
   this->deviceName = deviceName;
   this->deviceManufacturer = deviceManufacturer;
@@ -152,32 +151,6 @@ bool BleComboKeyboard::isConnected(void) {
   return this->connectionStatus->connected;
 }
 
-void BleComboKeyboard::restartAdvertising(void)
-{
-  if (this->pServer != nullptr)
-  {
-    this->pServer->getAdvertising()->start();
-    ESP_LOGD(LOG_TAG, "Advertising restarted!");
-  }
-}
-
-// ★追加：ちゃんと別れてから再募集する
-void BleComboKeyboard::disconnectAndAdvertise(void)
-{
-  if (this->pServer == nullptr) return;
-
-  // 既存接続を切る（雑だけど十分）
-  for (uint16_t i = 0; i < 4; ++i)
-  {
-    this->pServer->disconnect(i);
-  }
-
-  // 再募集
-  this->pServer->getAdvertising()->start();
-
-  ESP_LOGD(LOG_TAG, "Disconnected and advertising restarted!");
-}
-
 void BleComboKeyboard::setBatteryLevel(uint8_t level) {
   this->batteryLevel = level;
   if (hid != 0)
@@ -186,11 +159,11 @@ void BleComboKeyboard::setBatteryLevel(uint8_t level) {
 
 void BleComboKeyboard::taskServer(void* pvParameter) {
   BleComboKeyboard* bleKeyboardInstance = (BleComboKeyboard *) pvParameter; //static_cast<BleComboKeyboard *>(pvParameter);
-  BLEDevice::init(bleKeyboardInstance->deviceName);
-  bleKeyboardInstance->pServer = BLEDevice::createServer();
-  bleKeyboardInstance->pServer->setCallbacks(bleKeyboardInstance->connectionStatus);
+  NimBLEDevice::init(bleKeyboardInstance->deviceName);
+  NimBLEServer *pServer = NimBLEDevice::createServer();
+  pServer->setCallbacks(bleKeyboardInstance->connectionStatus);
 
-  bleKeyboardInstance->hid = new BLEHIDDevice(bleKeyboardInstance->pServer);
+  bleKeyboardInstance->hid = new NimBLEHIDDevice(pServer);
   bleKeyboardInstance->inputKeyboard = bleKeyboardInstance->hid->inputReport(KEYBOARD_ID); // <-- input REPORTID from report map
   bleKeyboardInstance->outputKeyboard = bleKeyboardInstance->hid->outputReport(KEYBOARD_ID);
   bleKeyboardInstance->inputMediaKeys = bleKeyboardInstance->hid->inputReport(MEDIA_KEYS_ID);
@@ -207,14 +180,14 @@ void BleComboKeyboard::taskServer(void* pvParameter) {
   bleKeyboardInstance->hid->pnp(0x02, 0xe502, 0xa111, 0x0210);
   bleKeyboardInstance->hid->hidInfo(0x00,0x01);
 
-  BLESecurity *pSecurity = new BLESecurity();
+  NimBLESecurity *pSecurity = new NimBLESecurity();
 
   pSecurity->setAuthenticationMode(ESP_LE_AUTH_BOND);
 
   bleKeyboardInstance->hid->reportMap((uint8_t*)_hidReportDescriptor, sizeof(_hidReportDescriptor));
   bleKeyboardInstance->hid->startServices();
 
-  BLEAdvertising *pAdvertising = bleKeyboardInstance->pServer->getAdvertising();
+  NimBLEAdvertising *pAdvertising = pServer->getAdvertising();
   pAdvertising->setAppearance(HID_KEYBOARD);
   pAdvertising->addServiceUUID(bleKeyboardInstance->hid->hidService()->getUUID());
   pAdvertising->start();
@@ -230,6 +203,7 @@ void BleComboKeyboard::sendReport(KeyReport* keys)
   {
     this->inputKeyboard->setValue((uint8_t*)keys, sizeof(KeyReport));
     this->inputKeyboard->notify();
+		this->delay_ms(_delay_ms);
   }
 }
 
@@ -239,6 +213,7 @@ void BleComboKeyboard::sendReport(MediaKeyReport* keys)
   {
     this->inputMediaKeys->setValue((uint8_t*)keys, sizeof(MediaKeyReport));
     this->inputMediaKeys->notify();
+		this->delay_ms(_delay_ms);
   }
 }
 
@@ -527,4 +502,15 @@ size_t BleComboKeyboard::write(const uint8_t *buffer, size_t size) {
 		buffer++;
 	}
 	return n;
+}
+
+void BleComboKeyboard::delay_ms(uint64_t ms) {
+  uint64_t m = esp_timer_get_time();
+  if(ms){
+    uint64_t e = (m + (ms * 1000));
+    if(m > e){ //overflow
+        while(esp_timer_get_time() > e) { }
+    }
+    while(esp_timer_get_time() < e) {}
+  }
 }

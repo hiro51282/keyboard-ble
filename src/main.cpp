@@ -13,7 +13,7 @@ HardwareSerial mySerial(2);
 BleComboKeyboard bleKeyboard("SimpleBLEDevice", "ESP32", 100);
 BleComboMouse bleMouse(&bleKeyboard);
 
-constexpr unsigned long SEND_INTERVAL_US = 36000;
+constexpr unsigned long SEND_INTERVAL_US = 30000;
 
 // =============================================
 // Buttons (2ボタン構成)
@@ -169,14 +169,14 @@ void loop()
     {
         currentMode = HostMode::A;
         Serial.println("Mode -> A");
-        bleKeyboard.disconnectAndAdvertise();
+        // bleKeyboard.disconnectAndAdvertise();
     }
 
     if (pressedB && !prevB)
     {
         currentMode = HostMode::B;
         Serial.println("Mode -> B");
-        bleKeyboard.disconnectAndAdvertise();
+        // bleKeyboard.disconnectAndAdvertise();
     }
 
     prevA = pressedA;
