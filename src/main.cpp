@@ -1,61 +1,13 @@
-// =============================================
-// CH9350 → ESP32 → BLE Bridge
-// Keyboard + Mouse 統合版
-// =============================================
-
 #include <Arduino.h>
 #include <BleComboKeyboard.h>
 #include <BleComboMouse.h>
-#include "esp_gap_ble_api.h"
 
 HardwareSerial mySerial(2);
 
 BleComboKeyboard bleKeyboard("SimpleBLEDevice", "ESP32", 100);
 BleComboMouse bleMouse(&bleKeyboard);
 
-constexpr unsigned long SEND_INTERVAL_US = 30000;
-
-// =============================================
-// Buttons (2ボタン構成)
-// =============================================
-constexpr int BUTTON_A_PIN = 4;
-constexpr int BUTTON_B_PIN = 2;
-
-// =============================================
-// Host Mode
-// =============================================
-enum class HostMode
-{
-    NONE,
-    A,
-    B
-};
-
-HostMode currentMode = HostMode::NONE;
-
-// =============================================
-// Peer Address (NEW)
-// =============================================
-uint8_t lastPeerAddr[6] = {0};
-bool hasPeerAddr = false;
-
-// GAP callback（接続相手取得）
-static void gapCallback(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param)
-{
-    if (event == ESP_GAP_BLE_AUTH_CMPL_EVT)
-    {
-        memcpy(lastPeerAddr, param->ble_security.auth_cmpl.bd_addr, 6);
-        hasPeerAddr = true;
-
-        Serial.print("Peer address: ");
-        for (int i = 0; i < 6; i++)
-        {
-            Serial.printf("%02X", lastPeerAddr[i]);
-            if (i != 5) Serial.print(":");
-        }
-        Serial.println();
-    }
-}
+constexpr unsigned long SEND_INTERVAL_US = 25000;
 
 // =============================================
 // RawFrame
@@ -119,7 +71,6 @@ bool readRawFrame(RawFrame &f)
         {
             if (idx < 4)
                 continue;
-
             idx = 0;
             continue;
         }
@@ -136,19 +87,12 @@ bool readRawFrame(RawFrame &f)
 void setup()
 {
     Serial.begin(115200);
-
     mySerial.begin(300000, SERIAL_8N1, 16, 17);
 
     bleKeyboard.begin();
     bleMouse.begin();
 
-    pinMode(BUTTON_A_PIN, INPUT_PULLUP);
-    pinMode(BUTTON_B_PIN, INPUT_PULLUP);
-
     Serial.println("=== BLE Bridge Start ===");
-
-    // GAP callback登録（接続相手取得）
-    esp_ble_gap_register_callback(gapCallback);
 }
 
 // =============================================
@@ -156,35 +100,6 @@ void setup()
 // =============================================
 void loop()
 {
-    // =============================================
-    // Button handling
-    // =============================================
-    static bool prevA = false;
-    static bool prevB = false;
-
-    bool pressedA = (digitalRead(BUTTON_A_PIN) == LOW);
-    bool pressedB = (digitalRead(BUTTON_B_PIN) == LOW);
-
-    if (pressedA && !prevA)
-    {
-        currentMode = HostMode::A;
-        Serial.println("Mode -> A");
-        // bleKeyboard.disconnectAndAdvertise();
-    }
-
-    if (pressedB && !prevB)
-    {
-        currentMode = HostMode::B;
-        Serial.println("Mode -> B");
-        // bleKeyboard.disconnectAndAdvertise();
-    }
-
-    prevA = pressedA;
-    prevB = pressedB;
-
-    // =============================================
-    // Connection debug
-    // =============================================
     static bool prevConnected = false;
     bool nowConnected = bleKeyboard.isConnected();
 
@@ -192,29 +107,9 @@ void loop()
     {
         Serial.print("Connection state -> ");
         Serial.println(nowConnected ? "CONNECTED" : "DISCONNECTED");
-
-        if (nowConnected)
-        {
-            Serial.print("Connected in mode: ");
-            if (currentMode == HostMode::A) Serial.println("A");
-            else if (currentMode == HostMode::B) Serial.println("B");
-            else Serial.println("NONE");
-
-            // ★ここに移動（prevConnected更新前）
-            Serial.println("[DEBUG] Peer connected (address not yet captured)");
-        }
-
         prevConnected = nowConnected;
     }
 
-    // =============================================
-    // Peer tracking (NEW)
-    // =============================================
-    // 実際のアドレスはGAP callbackで取得される
-
-    // =============================================
-    // UART
-    // =============================================
     static int accumX = 0;
     static int accumY = 0;
     static int accumWheel = 0;
@@ -232,13 +127,10 @@ void loop()
                 break;
 
             KeyReport report = {0};
-
             report.modifiers = f.data[3];
 
             for (int i = 0; i < 6; i++)
-            {
                 report.keys[i] = f.data[5 + i];
-            }
 
             bleKeyboard.sendReport(&report);
             break;
