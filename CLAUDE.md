@@ -17,6 +17,11 @@ This is an ESP32-based BLE HID bridge that converts USB keyboard and mouse input
 
 ### Common Commands
 
+**Run unit tests** (host PC, no hardware needed):
+```bash
+pio test -e test
+```
+
 **Build**:
 ```bash
 pio run -e esp32dev
@@ -42,6 +47,17 @@ The project includes Docker scripts for isolated builds:
 - `01_make_container.sh` — Build Docker image
 - `02_enter_container.sh` — Enter container environment  
 - `05_build_flash_monitor.sh` — All-in-one build, flash, and monitor
+
+### Testing
+
+See [TESTING.md](TESTING.md) for comprehensive unit testing guide.
+
+**Quick start**:
+```bash
+pio test -e test  # Run 21 unit tests on host machine (0.65 seconds)
+```
+
+Tests cover frame parser, mouse accumulation logic, and keyboard report generation.
 
 ## Architecture
 
