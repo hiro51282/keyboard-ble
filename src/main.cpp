@@ -7,7 +7,7 @@ HardwareSerial mySerial(2);
 BleComboKeyboard bleKeyboard("SimpleBLEDevice", "ESP32", 100);
 BleComboMouse bleMouse(&bleKeyboard);
 
-constexpr unsigned long SEND_INTERVAL_US = 25000;
+constexpr unsigned long SEND_INTERVAL_US = 7500;
 
 // =============================================
 // RawFrame

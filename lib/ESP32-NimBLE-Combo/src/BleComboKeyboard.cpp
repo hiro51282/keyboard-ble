@@ -190,6 +190,9 @@ void BleComboKeyboard::taskServer(void* pvParameter) {
   NimBLEAdvertising *pAdvertising = pServer->getAdvertising();
   pAdvertising->setAppearance(HID_KEYBOARD);
   pAdvertising->addServiceUUID(bleKeyboardInstance->hid->hidService()->getUUID());
+  // Request shorter connection interval from central device
+  pAdvertising->setMinPreferred(0x0006);  // 7.5ms = 6 × 1.25ms
+  pAdvertising->setMaxPreferred(0x000C);  // 15ms = 12 × 1.25ms
   pAdvertising->start();
   bleKeyboardInstance->hid->setBatteryLevel(bleKeyboardInstance->batteryLevel);
 

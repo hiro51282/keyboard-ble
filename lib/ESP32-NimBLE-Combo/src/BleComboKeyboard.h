@@ -98,7 +98,7 @@ private:
   KeyReport _keyReport;
   MediaKeyReport _mediaKeyReport;
   static void taskServer(void* pvParameter);
-  uint32_t           _delay_ms = 7;
+  uint32_t           _delay_ms = 0;
   void delay_ms(uint64_t ms);
 
 public:
