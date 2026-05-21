@@ -285,3 +285,123 @@ constexpr unsigned long SEND_INTERVAL_US = 7500;
 になりました。
 
 Kanpeki☆
+
+---
+
+## 複数PC切り替え機能
+
+### 実装済み機能
+
+2台のPC間でキーボード・マウス入力を切り替えられる機能を実装済み。
+
+* **ScrollLock 短押し**: 次のbond済みPCへ切り替え（`switchTarget()`）
+* **ScrollLock 3秒長押し**: 全bond削除・ペアリングモードへ（`enterPairingMode()`）
+* **GPIO23 短押し**: 同上（物理ボタン実装時）
+* **GPIO23 3秒長押し**: 同上（物理ボタン実装時）
+
+### 切り替えフロー
+
+```
+ScrollLock 短押し（or GPIO23 短押し）
+  ↓
+advertiseOnDisconnect 一時無効化
+  ↓
+現在のPCを disconnect
+  ↓
+bond リストから「次のPC」アドレスを取得
+  ↓
+whitelist に次のPCのみを追加 → whitelist filter でアドバタイズ
+（前のPCからの意図しない再接続を防ぐ）
+  ↓
+次のPCが自動接続（数秒） → onConnect でwhitelistをリセット
+```
+
+### 初回ペアリング手順
+
+1. 両PCでこのデバイスのBLE接続を削除（「デバイスを削除」）
+2. ESP32をリセット（または後述の NVS erase を実施）
+3. ScrollLock を 3 秒長押し → ペアリングモードへ（全bond削除、アドバタイズ開始）
+4. 1台目のPCでペアリング → 接続・認証完了を確認（シリアルで `bonds=1` を確認）
+5. 1台目のPCのBTを一時オフ（切断、2台目がつなぎやすくする）
+6. 2台目のPCでペアリング → 接続・認証完了を確認（シリアルで `bonds=2` を確認）
+7. ScrollLock 短押しで切り替えを確認
+
+---
+
+### 根本原因の調査記録：bond=1 問題
+
+実装後、bond 数が常に 1 になり `switchTarget()` が機能しない問題が発生した。
+
+#### 症状
+
+```
+AuthComplete: addr=<Win>   bonded=no bonds=0  ← Win ペアリング直後
+AuthComplete: addr=<Linux> bonded=no bonds=1  ← Linux ペアリング後もbonds=1のまま
+Switch: 1 bonded device(s)                    ← 切り替え不能
+```
+
+さらに `bond[0]` が Win / Linux で交互に切り替わる（eviction の証拠）。
+
+#### 根本原因：CCCD テーブルオーバーフロー
+
+NimBLE は通知サブスクリプション状態（CCCD: Client Characteristic Configuration Descriptor）を NVS に永続保存する。本プロジェクトの BLE HID デバイスには 5 つの NOTIFY 特性がある:
+
+| 特性 | UUID |
+|---|---|
+| Keyboard input report | 0x2A4D |
+| Media keys input report | 0x2A4D |
+| Mouse input report | 0x2A4D |
+| Battery level | 0x2A19 |
+| Boot keyboard input | 0x2A22 |
+
+PCが接続すると各 NOTIFY 特性に対して CCCD エントリが作成される。
+
+| PC台数 | 必要 CCCD エントリ数 |
+|---|---|
+| 1台 | 5 × 1 = 5 |
+| **2台** | 5 × 2 = **10** |
+| 3台 | 5 × 3 = 15 |
+
+NimBLE-Arduino のデフォルト値（`syscfg.h:929`）:
+
+```c
+#define MYNEWT_VAL_BLE_STORE_MAX_CCCDS (8)  // 2台で不足!
+```
+
+#### eviction の仕組み
+
+1. Win がペアリング → CCCD 5件保存（合計 5）
+2. Win 切断 → bond 保存（bonds=1）
+3. Linux が接続し通知をサブスクライブ → 9件目の CCCD 書き込みで `BLE_HS_ESTORE_CAP` 返却
+4. `ble_store_util_status_rr`（NimBLE のデフォルト store callback）が `BLE_STORE_EVENT_OVERFLOW` を受信
+5. CCCD overflow の場合 `ble_gap_unpair_oldest_except(Linux_addr)` を呼ぶ（`ble_store_util.c`）
+6. **Win の bond が bond + CCCD ごと削除される**
+7. Linux の bond 保存 → bonds=1（Linux のみ）
+
+`ble_store_util_status_rr` はサンプルアプリ向けの実装でありプロダクト向けではないが、NimBLE-Arduino では `NimBLEDevice.cpp:898` でデフォルトとして設定されている。
+
+#### 修正内容
+
+`platformio.ini` の `build_flags` に以下を追加:
+
+```ini
+-DMYNEWT_VAL_BLE_STORE_MAX_CCCDS=15
+```
+
+`syscfg.h` の `#ifndef MYNEWT_VAL_BLE_STORE_MAX_CCCDS` ガードをコンパイル前に上書きし、配列サイズと容量チェックに 15 が使われるようになる（5特性 × 3台 = 15）。
+
+#### NVS erase が必要な理由
+
+過去のペアリング試行で NVS に不正な状態（CCCD エントリが 8 件詰まった状態）が残っている可能性がある。次回フラッシュ時に一度 NVS を消去することで、クリーンな状態からペアリングを開始できる。
+
+```bash
+pio run -e esp32dev -t erase   # フラッシュ全体を消去
+pio run -e esp32dev -t upload  # 再フラッシュ
+```
+
+### ロールバック方法
+
+変更ファイルは `platformio.ini` のみ（`build_flags` 追加）。
+
+`git revert <commit>` または `build_flags` から削除するだけで元に戻せる。  
+NVS の bond 情報は `NimBLEDevice::deleteAllBonds()`（ScrollLock 3秒長押し）または各PCの「ペアリング解除」で削除可能。

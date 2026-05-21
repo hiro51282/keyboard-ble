@@ -94,7 +94,8 @@ private:
   NimBLECharacteristic* inputKeyboard;
   NimBLECharacteristic* outputKeyboard;
   NimBLECharacteristic* inputMediaKeys;
-  
+  NimBLEServer* pServer = nullptr;
+
   KeyReport _keyReport;
   MediaKeyReport _mediaKeyReport;
   static void taskServer(void* pvParameter);
@@ -118,6 +119,9 @@ public:
   void releaseAll(void);
   bool isConnected(void);
   void setBatteryLevel(uint8_t level);
+  NimBLEServer* getServer() { return pServer; }
+  NimBLEAddress getPeerAddress() { return connectionStatus->peerAddress; }
+  uint16_t getConnHandle() { return connectionStatus->connHandle; }
   uint8_t batteryLevel;
   void setDelay(uint32_t ms);
   std::string deviceManufacturer;

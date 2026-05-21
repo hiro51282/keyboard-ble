@@ -5,13 +5,17 @@
 
 #include <NimBLEServer.h>
 #include "NimBLECharacteristic.h"
+#include "NimBLEAddress.h"
 
 class BleConnectionStatus : public NimBLEServerCallbacks {
 public:
   BleConnectionStatus(void);
   bool connected = false;
+  NimBLEAddress peerAddress;
+  uint16_t connHandle = 0xFFFF;
   void onConnect(NimBLEServer* pServer, ble_gap_conn_desc* desc);
   void onDisconnect(NimBLEServer* pServer);
+  void onAuthenticationComplete(ble_gap_conn_desc* desc);
   NimBLECharacteristic* inputKeyboard;
   NimBLECharacteristic* outputKeyboard;
   NimBLECharacteristic* inputMouse;

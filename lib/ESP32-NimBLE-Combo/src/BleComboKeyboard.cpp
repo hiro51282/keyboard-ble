@@ -161,6 +161,7 @@ void BleComboKeyboard::taskServer(void* pvParameter) {
   BleComboKeyboard* bleKeyboardInstance = (BleComboKeyboard *) pvParameter; //static_cast<BleComboKeyboard *>(pvParameter);
   NimBLEDevice::init(bleKeyboardInstance->deviceName);
   NimBLEServer *pServer = NimBLEDevice::createServer();
+  bleKeyboardInstance->pServer = pServer;
   pServer->setCallbacks(bleKeyboardInstance->connectionStatus);
 
   bleKeyboardInstance->hid = new NimBLEHIDDevice(pServer);
