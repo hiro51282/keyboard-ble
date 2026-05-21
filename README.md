@@ -219,13 +219,12 @@ BLE notify 詰まり対策として
 mouse は周期送信しています。
 
 ```cpp
-constexpr unsigned long SEND_INTERVAL_US = 25000;
+constexpr unsigned long SEND_INTERVAL_US = 7500;
 ```
 
-現在の最適値は **25ms（25000µs）** です。
+現在の最適値は **7.5ms（7500µs）** です。
 
-速くしすぎると notify エラーや積み残しが発生し、
-逆に操作感が悪化しました。
+テスト・実運用を通じて最適化した値となっています。
 
 ---
 
@@ -267,8 +266,6 @@ constexpr unsigned long SEND_INTERVAL_US = 25000;
 
 * 複数 PC 切り替え
 * bond 管理改善
-* NimBLE 直実装
-* ESP-IDF 移行
 
 ただし、
 今は「ちゃんと使える」ので

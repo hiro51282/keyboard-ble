@@ -89,7 +89,7 @@ Vendored, NimBLE-based implementation of combined keyboard+mouse HID device:
 Mouse movement intentionally accumulates instead of sending every frame:
 
 ```cpp
-constexpr unsigned long SEND_INTERVAL_US = 25000;  // 25ms intervals
+constexpr unsigned long SEND_INTERVAL_US = 7500;  // 7.5ms intervals
 ```
 
 **Why?** BLE HID notify queues can overflow with high-frequency reports, causing dropped input and latency. The accumulation buffer lets the device batch motion reports at 25ms intervals, trading microsecond precision for queue stability.
