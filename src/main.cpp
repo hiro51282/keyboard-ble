@@ -2,6 +2,7 @@
 #include <NimBLEDevice.h>
 #include <BleComboKeyboard.h>
 #include <BleComboMouse.h>
+#include "config.h"  // CONFIG_USER_ID（.gitignore済み・雛形は config.h.example）
 
 HardwareSerial mySerial(2);
 
@@ -9,11 +10,10 @@ BleComboKeyboard bleKeyboard("SimpleBLEDevice", "ESP32", 100);
 BleComboMouse bleMouse(&bleKeyboard);
 
 constexpr unsigned long SEND_INTERVAL_US = 7500;
-constexpr int SWITCH_PIN = 23;
-constexpr uint8_t KEY_SCROLL_LOCK = 0x47;
+constexpr int BUTTON_PIN = 21;  // タクトスイッチ（INPUT_PULLUP / 押下=LOW）
 
 // =============================================
-// enterPairingMode  ボタン長押し（3秒）で呼ぶ
+// enterPairingMode  ボタン長押し（2秒）で呼ぶ
 //   全bond削除 → 切断 → 通常アドバタイズ
 //   2台を順番にペアリングして bond 2件を揃える
 // =============================================
@@ -112,6 +112,27 @@ void switchTarget()
 }
 
 // =============================================
+// typeUserId  ボタン単押しで CONFIG_USER_ID をHID送信
+//   1文字ずつ press+release。BLE notify取りこぼし防止に軽くディレイを挟む。
+// =============================================
+void typeUserId()
+{
+    if (!bleKeyboard.isConnected()) {
+        Serial.println("Type: not connected");
+        return;
+    }
+
+    Serial.printf("Type: sending user id (%u chars)\n",
+                  (unsigned)(sizeof(CONFIG_USER_ID) - 1));
+
+    bleKeyboard.releaseAll();
+    for (const char* p = CONFIG_USER_ID; *p != '\0'; ++p) {
+        bleKeyboard.write((uint8_t)*p);
+        delay(8);  // キー間ディレイ
+    }
+}
+
+// =============================================
 // RawFrame
 // =============================================
 struct RawFrame
@@ -191,7 +212,7 @@ void setup()
     Serial.begin(115200);
     mySerial.begin(300000, SERIAL_8N1, 16, 17);
 
-    pinMode(SWITCH_PIN, INPUT_PULLUP);
+    pinMode(BUTTON_PIN, INPUT_PULLUP);
 
     bleKeyboard.begin();
     bleMouse.begin();
@@ -214,48 +235,75 @@ void loop()
         prevConnected = nowConnected;
     }
 
-    // 物理ボタン（GPIO23）短押し/長押し検出
-    // 短押し（50ms〜3秒）: switchTarget()
-    // 長押し（3秒以上）  : enterPairingMode()
+    // 物理ボタン（GPIO21）単押し / ダブルクリック / 長押し検出
+    //   単押し        : typeUserId()        ユーザーID送信
+    //   ダブルクリック : switchTarget()      接続先切替
+    //   長押し2秒      : enterPairingMode()  ペアリングモード
+    // ※単押しはダブル判定のため DOUBLE_GAP_MS 経過してから確定する
     {
-        static bool prevBtn = HIGH;
-        static unsigned long btnPressMs = 0;
-        static bool longPressTriggered = false;
+        constexpr unsigned long DEBOUNCE_MS   = 20;    // チャタリング除去
+        constexpr unsigned long LONG_MS       = 2000;  // 長押し判定
+        constexpr unsigned long DOUBLE_GAP_MS = 300;   // ダブルクリック許容間隔
 
-        bool nowBtn = digitalRead(SWITCH_PIN);
+        static bool stable = false;            // デバウンス後の押下状態
+        static bool lastReading = false;
+        static unsigned long lastChangeMs = 0;
+
+        static bool prevPressed = false;
+        static unsigned long pressStartMs = 0;
+        static bool longFired = false;
+        static bool awaitingSecond = false;    // 1クリック確定、ダブル待ち
+        static unsigned long firstReleaseMs = 0;
+
         unsigned long nowMs = millis();
+        bool reading = (digitalRead(BUTTON_PIN) == LOW);  // 押下=LOW
 
-        if (prevBtn == HIGH && nowBtn == LOW) {
-            btnPressMs = nowMs;
-            longPressTriggered = false;
-        } else if (nowBtn == LOW && !longPressTriggered && nowMs - btnPressMs >= 3000) {
+        // デバウンス
+        if (reading != lastReading) {
+            lastReading = reading;
+            lastChangeMs = nowMs;
+        }
+        if (nowMs - lastChangeMs >= DEBOUNCE_MS) {
+            stable = reading;
+        }
+
+        // 押下開始
+        if (stable && !prevPressed) {
+            pressStartMs = nowMs;
+            longFired = false;
+        }
+
+        // 長押し（押しっぱなしで2秒）
+        if (stable && !longFired && nowMs - pressStartMs >= LONG_MS) {
             enterPairingMode();
-            longPressTriggered = true;
-        } else if (prevBtn == LOW && nowBtn == HIGH) {
-            if (!longPressTriggered && nowMs - btnPressMs >= 50) {
-                switchTarget();
+            longFired = true;
+            awaitingSecond = false;  // 保留中のクリックは破棄
+        }
+
+        // 離した
+        if (!stable && prevPressed && !longFired) {
+            if (awaitingSecond && nowMs - firstReleaseMs <= DOUBLE_GAP_MS) {
+                switchTarget();          // 2回目 = ダブルクリック
+                awaitingSecond = false;
+            } else {
+                awaitingSecond = true;   // 1回目 = ダブル待ちへ
+                firstReleaseMs = nowMs;
             }
         }
 
-        prevBtn = nowBtn;
+        // 単押し確定（ダブルが来ないままタイムアウト）
+        if (awaitingSecond && !stable && nowMs - firstReleaseMs > DOUBLE_GAP_MS) {
+            typeUserId();
+            awaitingSecond = false;
+        }
+
+        prevPressed = stable;
     }
 
     static int accumX = 0;
     static int accumY = 0;
     static int accumWheel = 0;
     static unsigned long lastSendUs = 0;
-
-    // ScrollLock 短押し/長押し状態（フレーム処理の外で長押し時間チェックするためここで宣言）
-    static bool scrollLockDown = false;
-    static unsigned long scrollLockPressMs = 0;
-    static bool scrollLockLongTriggered = false;
-
-    // ScrollLock 長押しチェック（CH9350がリピートを送らなくてもloop内で確認）
-    if (scrollLockDown && !scrollLockLongTriggered && millis() - scrollLockPressMs >= 3000)
-    {
-        enterPairingMode();
-        scrollLockLongTriggered = true;
-    }
 
     RawFrame f;
 
@@ -265,26 +313,6 @@ void loop()
         {
         case 0x01:
         {
-            // ScrollLock 短押し（切り替え）/ 長押し（ペアリングモード）
-            {
-                bool hasScrollLock = false;
-                for (int i = 0; i < 6; i++)
-                {
-                    if (f.data[5 + i] == KEY_SCROLL_LOCK) { hasScrollLock = true; break; }
-                }
-                if (hasScrollLock && !scrollLockDown) {
-                    // キーダウン
-                    scrollLockDown = true;
-                    scrollLockPressMs = millis();
-                    scrollLockLongTriggered = false;
-                } else if (!hasScrollLock && scrollLockDown) {
-                    // キーアップ
-                    scrollLockDown = false;
-                    if (!scrollLockLongTriggered && millis() - scrollLockPressMs >= 50)
-                        switchTarget();
-                }
-            }
-
             if (!bleKeyboard.isConnected())
                 break;
 

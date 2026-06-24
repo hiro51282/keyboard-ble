@@ -1,0 +1,12 @@
+#pragma once
+// =============================================
+// ローカル設定テンプレート
+//   使い方:
+//     cp src/config.h.example src/config.h
+//   して config.h の CONFIG_USER_ID を自分の値に書き換える。
+//   config.h は .gitignore 済みなので本物はコミットされない。
+//
+//   CONFIG_USER_ID: ボタン単押しでHID送信される1行テキスト
+//                   （長くて打つのが面倒なユーザーID等）
+// =============================================
+constexpr char CONFIG_USER_ID[] = "your-long-user-id@example.com";
