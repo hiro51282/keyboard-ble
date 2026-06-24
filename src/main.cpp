@@ -112,8 +112,66 @@ void switchTarget()
 }
 
 // =============================================
-// typeUserId  ボタン単押しで CONFIG_USER_ID をHID送信
-//   1文字ずつ press+release。BLE notify取りこぼし防止に軽くディレイを挟む。
+// asciiToJisHid
+//   ASCII文字 → JIS配列ホストで意図通りに入力されるHID usage を返す。
+//   shift に Shift要否を返す。usage==0 は非対応文字。
+//   ※ライブラリの write() はUS配列前提なので記号がズレる。JISホスト向けに
+//     物理キーのusageを直接指定して送る（英数字はUS/JIS共通）。
+// =============================================
+static uint8_t asciiToJisHid(char c, bool &shift)
+{
+    shift = false;
+    if (c >= 'a' && c <= 'z') { return 0x04 + (c - 'a'); }
+    if (c >= 'A' && c <= 'Z') { shift = true; return 0x04 + (c - 'A'); }
+    if (c >= '1' && c <= '9') { return 0x1E + (c - '1'); }
+    if (c == '0') { return 0x27; }
+
+    switch (c)
+    {
+        case ' ':  return 0x2C;
+        case '\n': return 0x28;  // Enter
+        case '\t': return 0x2B;  // Tab
+        // 数字段 Shift（JIS）
+        case '!':  shift = true; return 0x1E;
+        case '"':  shift = true; return 0x1F;
+        case '#':  shift = true; return 0x20;
+        case '$':  shift = true; return 0x21;
+        case '%':  shift = true; return 0x22;
+        case '&':  shift = true; return 0x23;
+        case '\'': shift = true; return 0x24;
+        case '(':  shift = true; return 0x25;
+        case ')':  shift = true; return 0x26;
+        // JIS固有の記号配置
+        case '-':  return 0x2D;
+        case '=':  shift = true; return 0x2D;
+        case '^':  return 0x2E;
+        case '~':  shift = true; return 0x2E;
+        case '@':  return 0x2F;              // ★ JISは Shiftなし単独キー
+        case '`':  shift = true; return 0x2F;
+        case '[':  return 0x30;
+        case '{':  shift = true; return 0x30;
+        case ']':  return 0x31;
+        case '}':  shift = true; return 0x31;
+        case ';':  return 0x33;
+        case '+':  shift = true; return 0x33;
+        case ':':  return 0x34;
+        case '*':  shift = true; return 0x34;
+        case ',':  return 0x36;
+        case '<':  shift = true; return 0x36;
+        case '.':  return 0x37;
+        case '>':  shift = true; return 0x37;
+        case '/':  return 0x38;
+        case '?':  shift = true; return 0x38;
+        case '\\': return 0x87;              // ろ キー（International1）
+        case '_':  shift = true; return 0x87;
+        case '|':  shift = true; return 0x89;  // ¥ キー（International3）
+    }
+    return 0;  // 非対応
+}
+
+// =============================================
+// typeUserId  ボタン単押しで CONFIG_USER_ID をHID送信（JIS配列ホスト向け）
+//   1文字ずつ keydown→keyup。BLE notify取りこぼし防止に軽くディレイを挟む。
 // =============================================
 void typeUserId()
 {
@@ -127,8 +185,22 @@ void typeUserId()
 
     bleKeyboard.releaseAll();
     for (const char* p = CONFIG_USER_ID; *p != '\0'; ++p) {
-        bleKeyboard.write((uint8_t)*p);
-        delay(8);  // キー間ディレイ
+        bool shift = false;
+        uint8_t usage = asciiToJisHid(*p, shift);
+        if (usage == 0) {
+            Serial.printf("Type: skip unsupported char 0x%02X\n", (uint8_t)*p);
+            continue;
+        }
+
+        KeyReport rep = {0};
+        rep.modifiers = shift ? 0x02 : 0x00;  // 0x02 = 左Shift
+        rep.keys[0] = usage;
+        bleKeyboard.sendReport(&rep);
+        delay(8);
+
+        KeyReport up = {0};
+        bleKeyboard.sendReport(&up);
+        delay(8);
     }
 }
 
